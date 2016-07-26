@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path"
 
@@ -20,7 +19,14 @@ func main() {
 		log.Errorf("Unable to open log file: %v, error: %v\n", logFile, err)
 	}
 
-	fmt.Println(lgtv.Cmd)
+	tv := lgtv.API{Logger: log}
+	_ = lgtv.Cmd
+
+	tv.ShowPIN()
+	// if !tv.Zap(cmd["Power"]) {
+	// 	log.Error("Unabled to contact TV...")
+	// }
+
 }
 
 func newLog() (*logging.Logger, error) {
