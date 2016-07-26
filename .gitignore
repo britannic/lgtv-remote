@@ -1,2 +1,8 @@
 
 debug
+
+*.log
+
+lgtv-remote.log
+
+debug.log

@@ -9,19 +9,21 @@ import (
 )
 
 var (
-	prog     = path.Base(os.Args[0])
-	log, err = newLog()
-	logFile  = prog + ".log"
+	prog    = path.Base(os.Args[0])
+	log     = logging.MustGetLogger(prog)
+	logFile = prog + ".log"
 )
 
 func main() {
-	if log, err = newLog(); err != nil {
+	err := newLog()
+	if err != nil {
 		log.Errorf("Unable to open log file: %v, error: %v\n", logFile, err)
 	}
 
-	tv := lgtv.API{Logger: log}
+	tv := lgtv.API{Logger: log, Timeout: 0}
 	_ = lgtv.Cmd
 
+	tv.Critical("Test")
 	tv.ShowPIN()
 	// if !tv.Zap(cmd["Power"]) {
 	// 	log.Error("Unabled to contact TV...")
@@ -29,7 +31,7 @@ func main() {
 
 }
 
-func newLog() (*logging.Logger, error) {
+func newLog() error {
 	fdFmt := logging.MustStringFormatter(
 		`%{level:.4s}[%{id:03x}]%{time:2006-01-02 15:04:05.000} ▶ %{message}`,
 	)
@@ -47,5 +49,5 @@ func newLog() (*logging.Logger, error) {
 
 	logging.SetBackend(fdFmttr, scrFmttr)
 
-	return logging.MustGetLogger(prog), err
+	return err
 }

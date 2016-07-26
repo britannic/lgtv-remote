@@ -13,6 +13,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"golang.org/x/net/context"
 
 	logging "github.com/op/go-logging"
 )
@@ -22,11 +25,13 @@ type API struct {
 	*logging.Logger
 	AppID   string
 	AppName string
-	ID      string
-	Name    string
-	IP      net.IP
+	ctx     context.Context
 	Found   bool
+	ID      string
+	IP      net.IP
+	Name    string
 	Pin     string
+	Timeout time.Duration
 }
 
 // CmdMode sets which API command is used
@@ -116,7 +121,8 @@ var (
 		"Apps":        417,
 	}
 
-	conn *net.UDPConn // UDP Connection
+	conn     *net.UDPConn // UDP Connection
+	maxTries = 10
 
 	mode = CmdMode{
 		Pair: "/udap/api/pairing",
@@ -139,7 +145,7 @@ func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 	a.Info("About to contact LG TV on address: ", lgtvCMD, " with command: ", string(msg))
 
 	if req, err = http.NewRequest("POST", lgtvCMD, nil); err != nil {
-		return 0, strings.NewReader(fmt.Sprintf("Unable to form HTTP request %v", lgtvCMD)), err
+		return http.StatusNotAcceptable, strings.NewReader(fmt.Sprintf("Unable to form HTTP request %v", lgtvCMD)), err
 	}
 
 	req.Header.Add("Content-Type", "text/xml; charset=utf-8")
@@ -154,7 +160,7 @@ func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 	defer resp.Body.Close()
 
 	body, err = ioutil.ReadAll(resp.Body)
-	if len(body) == 0 {
+	if len(body) < 1 {
 		return resp.StatusCode, strings.NewReader(fmt.Sprintf("%s did not confirm command received", a.IP.String())), err
 
 	}
@@ -168,59 +174,79 @@ func (a *API) ShowPIN() {
 		a.setUpSox()
 	}
 
-	xmitStr := `M-SEARCH * HTTP/1.1` + cr +
+	_ = []byte(`M-SEARCH * HTTP/1.1` + cr +
 		`HOST: 239.255.255.250:1900` + cr +
 		`MAN: "ssdp:discover"` + cr +
 		`MX: 2` + cr +
-		`ST: urn:schemas-upnp-org:device:MediaRenderer:1` + cr + cr
+		`ST: urn:schemas-upnp-org:device:MediaRenderer:1` + cr + cr)
 
-	_ = `B-SEARCH * HTTP/1.1` + cr +
+	xmitStr := []byte(`B-SEARCH * HTTP/1.1` + cr +
 		`HOST: 239.255.255.250:1990` + cr +
 		`MAN: "ssdp:discover` + cr + `MX: 3` + cr +
 		`ST: urn:schemas-udap:service:smartText:1` + cr +
-		`USER-AGENT:` + agent + cr + cr
+		`USER-AGENT:` + agent + cr + cr)
 
 	a.scan("1990", xmitStr)
-	for !a.Found {
+
+	i := 0
+	for !a.Found && i != maxTries {
 		a.chkMsgs()
+		i++
+		switch {
+		case !a.Found && i != maxTries:
+			a.Warning("No LG TV detected yet...")
+			time.Sleep(a.Timeout * time.Second)
+		case !a.Found && i == maxTries:
+			a.Critical("No LG TV detected, giving up!")
+		case a.Found:
+			a.Infof("LG TV %v with IDL %v found at %v", a.Name, a.ID, a.IP)
+		}
 	}
 }
 
 // Pair using a specified pin
 func (a *API) Pair() {
-	a.Infof("Pairing with TV: %v using Pin: %v", a.Name, a.Pin)
 	msg := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>hello</name><value>%v</value><port>8080</port></api></envelope>`, a.Pin))
+
+	a.Infof("Pairing with TV: %v using Pin: %v", a.Name, a.Pin)
+
 	a.Send(mode.Pair, msg)
 }
 
 // Zap sends a command to the tv
 func (a *API) Zap(cmd int) bool {
 	i := strconv.Itoa(cmd)
-	rePair := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="command"><name>HandleKeyInput</name><value>%v</value></api></envelope>`, i))
+	xmitStr := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="command"><name>HandleKeyInput</name><value>%v</value></api></envelope>`, i))
 	zap := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="command"><name>HandleKeyInput</name><value>%v</value></api></envelope>`, i))
 
 	a.Infof("Sending command %v to %v", i, a.Name)
 
 	resp, _, _ := a.Send(mode.Send, zap)
 
-	// Pair whenever the LG has been turned off and then on
+	// Pairing required whenever the LG has been turned off and then on
 	if resp != 200 {
 		a.Pair()
-		resp, _, _ = a.Send(mode.Send, rePair)
+		resp, _, _ = a.Send(mode.Send, xmitStr)
 	}
 
 	return resp == 200
 }
 
-func (a *API) scan(portAddr string, msg string) error {
-	a.Infof("Broadcasting %q on: %v:%v", msg, net.IPv4bcast.String(), portAddr)
+func (a *API) scan(portAddr string, msg []byte) error {
+	var timeout time.Time
+	timeout.Add(7 * time.Second)
+	conn.SetWriteDeadline(timeout)
 
 	udpAddr, err := net.ResolveUDPAddr(udp4, fmt.Sprintf("%v:%v", net.IPv4bcast.String(), portAddr))
 	if err != nil {
 		a.Fatal(err)
 	}
 
-	_, err = conn.WriteToUDP([]byte(msg), udpAddr)
+	a.Infof("Broadcasting %q on: %v:%v", msg, net.IPv4bcast.String(), portAddr)
+
+	_, err = conn.WriteToUDP(msg, udpAddr)
+	defer conn.Close()
+
 	return err
 }
 
@@ -261,6 +287,7 @@ func (a *API) setUpSox() {
 		fmt.Println("Listen:", err)
 		os.Exit(1)
 	}
+
 	sock = true
 }
 
@@ -297,7 +324,7 @@ func (a *API) parseMsg(msg string, addr *net.UDPAddr) (bool, error) {
 		a.pairingRequest()
 	}
 
-	if (addr.IP.String() == a.IP.String()) && (a.Found == true) {
+	if addr.IP.String() == a.IP.String() && a.Found == true {
 		a.Infof("LG TV %v with IP %v says: %q", a.Name, addr.IP, msg)
 	}
 
@@ -305,9 +332,9 @@ func (a *API) parseMsg(msg string, addr *net.UDPAddr) (bool, error) {
 }
 
 func (a *API) pairingRequest() error {
-	zap := []byte(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>showKey</name></api></envelope>`)
+	xmitStr := []byte(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>showKey</name></api></envelope>`)
 
-	if code, _, err := a.Send(mode.Pair, zap); err != nil || code != 200 {
+	if code, _, err := a.Send(mode.Pair, xmitStr); err != nil || code != 200 {
 		return fmt.Errorf("Pairing error: %v", err)
 	}
 
