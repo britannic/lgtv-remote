@@ -126,8 +126,8 @@ var (
 	sock = false
 )
 
-// ClickRemote sends an http request to the LG smart tv specified by *TV
-func (a *API) ClickRemote(cmd string, msg []byte) (int, io.Reader, error) {
+// Send sends an http request to the LG smart tv specified by *TV
+func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 	var (
 		body    []byte
 		err     error
@@ -135,6 +135,8 @@ func (a *API) ClickRemote(cmd string, msg []byte) (int, io.Reader, error) {
 		resp    *http.Response
 		req     *http.Request
 	)
+
+	a.Info("About to contact LG TV on address: ", lgtvCMD, " with command: ", string(msg))
 
 	if req, err = http.NewRequest("POST", lgtvCMD, nil); err != nil {
 		return 0, strings.NewReader(fmt.Sprintf("Unable to form HTTP request %v", lgtvCMD)), err
@@ -162,7 +164,7 @@ func (a *API) ClickRemote(cmd string, msg []byte) (int, io.Reader, error) {
 
 // ShowPIN displays PIN on screen for pairing
 func (a *API) ShowPIN() {
-	if sock == false {
+	if !sock {
 		a.setUpSox()
 	}
 
@@ -179,7 +181,7 @@ func (a *API) ShowPIN() {
 		`USER-AGENT:` + agent + cr + cr
 
 	a.scan("1990", xmitStr)
-	for a.Found == false {
+	for !a.Found {
 		a.chkMsgs()
 	}
 }
@@ -188,7 +190,7 @@ func (a *API) ShowPIN() {
 func (a *API) Pair() {
 	a.Infof("Pairing with TV: %v using Pin: %v", a.Name, a.Pin)
 	msg := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>hello</name><value>%v</value><port>8080</port></api></envelope>`, a.Pin))
-	a.ClickRemote(mode.Pair, msg)
+	a.Send(mode.Pair, msg)
 }
 
 // Zap sends a command to the tv
@@ -199,12 +201,12 @@ func (a *API) Zap(cmd int) bool {
 
 	a.Infof("Sending command %v to %v", i, a.Name)
 
-	resp, _, _ := a.ClickRemote(mode.Send, zap)
+	resp, _, _ := a.Send(mode.Send, zap)
 
 	// Pair whenever the LG has been turned off and then on
 	if resp != 200 {
 		a.Pair()
-		resp, _, _ = a.ClickRemote(mode.Send, rePair)
+		resp, _, _ = a.Send(mode.Send, rePair)
 	}
 
 	return resp == 200
@@ -305,7 +307,7 @@ func (a *API) parseMsg(msg string, addr *net.UDPAddr) (bool, error) {
 func (a *API) pairingRequest() error {
 	zap := []byte(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>showKey</name></api></envelope>`)
 
-	if code, _, err := a.ClickRemote(mode.Pair, zap); err != nil || code != 200 {
+	if code, _, err := a.Send(mode.Pair, zap); err != nil || code != 200 {
 		return fmt.Errorf("Pairing error: %v", err)
 	}
 
