@@ -2,6 +2,7 @@ package lgtv
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/context"
-
 	logging "github.com/op/go-logging"
 )
 
@@ -25,7 +24,6 @@ type API struct {
 	*logging.Logger
 	AppID   string
 	AppName string
-	ctx     context.Context
 	Found   bool
 	ID      string
 	IP      net.IP
@@ -40,9 +38,6 @@ type CmdMode struct {
 	Send string
 }
 
-// TVCmds is a map[string]int map of commands
-type TVCmds map[string]int
-
 const (
 	agent   = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7`
 	cr      = "\r\n"
@@ -50,75 +45,171 @@ const (
 	udp4    = "udp4"
 )
 
+// LGCmd is a struct of serial and WebOS commands
+type LGCmd struct {
+	Cmd1 string `json:"1st cmd,omitempty"`
+	Cmd2 string `json:"2nd cmd,omitempty"`
+	Data string `json:"data,omitempty"`
+	Max  int    `json:"max,omitempty"`
+	Note string `json:"note,omitempty"`
+	Web  int    `json:"WebOS,omitempty"`
+}
+
+// TVCmds is a map[string]struct{} map of commands
+type TVCmds map[string]LGCmd
+
+// IDCmdMap is a map TVCmds keyed to IDs
+type IDCmdMap map[int]TVCmds
+
 var (
 	// Cmd maps LG TV int commands to meaningful names
 	Cmd = TVCmds{
-		"Power":       1,
-		"Num0":        2,
-		"Num1":        3,
-		"Num2":        4,
-		"Num3":        5,
-		"Num4":        6,
-		"Num5":        7,
-		"Num6":        8,
-		"Num7":        9,
-		"Num8":        10,
-		"Num9":        11,
-		"Up":          12,
-		"Down":        13,
-		"Left":        14,
-		"Right":       15,
-		"OK":          20,
-		"Home":        21,
-		"Menu":        22,
-		"Back":        23,
-		"Vol_Up":      24,
-		"Vol_Dn":      25,
-		"Mute":        26,
-		"Ch_Up":       27,
-		"Ch_Dn":       28,
-		"Blue":        29,
-		"Green":       30,
-		"Red":         31,
-		"Yellow":      32,
-		"Play":        33,
-		"Pause":       34,
-		"Stop":        35,
-		"FF":          36,
-		"REW":         37,
-		"Skip_FF":     38,
-		"Skip_REW":    39,
-		"REC":         40,
-		"REC_List":    41,
-		"Repeat":      42,
-		"Live":        43,
-		"EPG":         44,
-		"Info":        45,
-		"Aspect":      46,
-		"Ext":         47,
-		"PIP":         48,
-		"Subtitle":    49,
-		"Prog_List":   50,
-		"Text":        51,
-		"Mark":        52,
-		"3D":          400,
-		"3D_LR":       401,
-		"Dash":        402,
-		"Prev_Ch":     403,
-		"Fave":        404,
-		"Quick_Menu":  405,
-		"Text_Opt":    406,
-		"Audio_Desc":  407,
-		"Netcast":     408,
-		"Energy_Save": 409,
-		"AV":          410,
-		"SimpLink":    411,
-		"Exit":        412,
-		"Reserve":     413,
-		"PIP_CH_Up":   414,
-		"PIP_CH_Down": 415,
-		"PIP_Switch":  416,
-		"Apps":        417,
+		// %v is a placeholder for ID (if multi 2nd %v setting), 00 = units
+		"3D_LR":             {Web: 401},
+		"3D":                {Web: 400},
+		"AbnormalRead":      {Cmd1: "k", Cmd2: "z", Data: "FF"},
+		"AbnormalState0":    {Data: "0", Note: "Normal (Power on and signal exist)"},
+		"AbnormalState1":    {Data: "1", Note: "No signal (Power on)"},
+		"AbnormalState2":    {Data: "2", Note: "Turn the monitor off by remote control"},
+		"AbnormalState3":    {Data: "3", Note: "Turn the monitor off by sleep time function"},
+		"AbnormalState4":    {Data: "4", Note: "Turn the monitor off by RS-232C function"},
+		"AbnormalState6":    {Data: "6", Note: "AC down"},
+		"AbnormalState8":    {Data: "8", Note: "Turn the monitor off by off time function"},
+		"AbnormalState9":    {Data: "9", Note: "Turn the monitor off by auto off function"},
+		"AfterImageInvert":  {Cmd1: "j", Cmd2: "p", Data: "01"},
+		"AfterImageNormal":  {Cmd1: "j", Cmd2: "p", Data: "08"},
+		"AfterImageOrbiter": {Cmd1: "j", Cmd2: "p", Data: "02"},
+		"AfterImageWtWash":  {Cmd1: "j", Cmd2: "p", Data: "04"},
+		"Apps":              {Web: 417},
+		"Aspect_1:1(PC)":    {Cmd1: "k", Cmd2: "c", Data: "09", Web: 46},
+		"Aspect_14:9":       {Cmd1: "k", Cmd2: "c", Data: "07", Web: 46},
+		"Aspect_16:9":       {Cmd1: "k", Cmd2: "c", Data: "02", Web: 46},
+		"Aspect_4:3":        {Cmd1: "k", Cmd2: "c", Data: "01", Web: 46},
+		"Aspect_Full":       {Cmd1: "k", Cmd2: "c", Data: "08", Web: 46},
+		"Aspect_Horizon":    {Cmd1: "k", Cmd2: "c", Data: "03", Web: 46},
+		"Aspect_Status":     {Cmd1: "k", Cmd2: "c", Data: "FF", Web: 46},
+		"Aspect_Zoom_1":     {Cmd1: "k", Cmd2: "c", Data: "04", Web: 46},
+		"Aspect_Zoom_2":     {Cmd1: "k", Cmd2: "c", Data: "05", Web: 46},
+		"Audio_Desc":        {Web: 407},
+		"AutoConfig(RGB)PC": {Cmd1: "j", Cmd2: "u", Data: "01"},
+		"AV":                {Web: 410},
+		"Back":              {Web: 23},
+		"BalanceLevel":      {Cmd1: "k", Cmd2: "t", Data: "FF"},
+		"BalanceSet":        {Cmd1: "k", Cmd2: "t", Max: 64},
+		"Blue":              {Web: 29},
+		"BrightnessLevel":   {Cmd1: "k", Cmd2: "h", Data: "FF"},
+		"BrightnessSet":     {Cmd1: "k", Cmd2: "h", Max: 64},
+		"Ch_Dn":             {Web: 28},
+		"Ch_Up":             {Web: 27},
+		"ColorCool":         {Cmd1: "k", Cmd2: "u", Data: "01"},
+		"ColorLevel":        {Cmd1: "k", Cmd2: "i", Data: "FF"},
+		"ColorNormal":       {Cmd1: "k", Cmd2: "u", Data: "00"},
+		"ColorSet":          {Cmd1: "k", Cmd2: "i", Max: 64},
+		"ColorTempLevel":    {Cmd1: "k", Cmd2: "u", Data: "FF"},
+		"ColorUser":         {Cmd1: "k", Cmd2: "u", Data: "03"},
+		"ColorWarm":         {Cmd1: "k", Cmd2: "u", Data: "02"},
+		"ContrastLevel":     {Cmd1: "k", Cmd2: "g", Data: "FF"},
+		"ContrastSet":       {Cmd1: "k", Cmd2: "g", Max: 64},
+		"Dash":              {Web: 402},
+		"Down":              {Web: 13},
+		"Energy_Save":       {Web: 409},
+		"EPG":               {Web: 44},
+		"Exit":              {Web: 412},
+		"Ext":               {Web: 47},
+		"Fave":              {Web: 404},
+		"FF":                {Web: 36},
+		"Green":             {Web: 30},
+		"Home":              {Web: 21},
+		"Info":              {Web: 45},
+		"InputAV":           {Cmd1: "k", Cmd2: "b", Data: "02"},
+		"InputComponent1":   {Cmd1: "k", Cmd2: "b", Data: "04"},
+		"InputComponent2":   {Cmd1: "k", Cmd2: "b", Data: "05"},
+		"InputHDMI(DTV)":    {Cmd1: "k", Cmd2: "b", Data: "08"},
+		"InputHDMI(PC)":     {Cmd1: "k", Cmd2: "b", Data: "09"},
+		"InputRGB(DTV)":     {Cmd1: "k", Cmd2: "b", Data: "06"},
+		"InputRGB(PC)":      {Cmd1: "k", Cmd2: "b", Data: "07"},
+		"InternalTemp":      {Cmd1: "d", Cmd2: "n", Data: "FF", Note: "The data is 1 byte long in Hexadecimal."},
+		"LampCheck":         {Cmd1: "d", Cmd2: "p", Data: "FF"},
+		"LampFault":         {Cmd1: "d", Cmd2: "p", Data: "00"},
+		"LampOk":            {Cmd1: "d", Cmd2: "p", Data: "01"},
+		"Left":              {Web: 14},
+		"Live":              {Web: 43},
+		"Mark":              {Web: 52},
+		"Menu":              {Web: 22},
+		"Mute_Status":       {Cmd1: "k", Cmd2: "e", Data: "FF"},
+		"MuteOff":           {Cmd1: "k", Cmd2: "e", Data: "01", Web: 26},
+		"MuteOn":            {Cmd1: "k", Cmd2: "e", Data: "00", Web: 26},
+		"Netcast":           {Web: 408},
+		"Num0":              {Cmd1: "m", Cmd2: "c", Data: "02", Web: 2},
+		"Num1":              {Cmd1: "m", Cmd2: "c", Data: "03", Web: 3},
+		"Num2":              {Cmd1: "m", Cmd2: "c", Data: "04", Web: 4},
+		"Num3":              {Cmd1: "m", Cmd2: "c", Data: "05", Web: 5},
+		"Num4":              {Cmd1: "m", Cmd2: "c", Data: "06", Web: 6},
+		"Num5":              {Cmd1: "m", Cmd2: "c", Data: "07", Web: 7},
+		"Num6":              {Cmd1: "m", Cmd2: "c", Data: "08", Web: 7},
+		"Num7":              {Cmd1: "m", Cmd2: "c", Data: "09", Web: 9},
+		"Num8":              {Cmd1: "m", Cmd2: "c", Data: "10", Web: 10},
+		"Num9":              {Cmd1: "m", Cmd2: "c", Data: "11", Web: 11},
+		"OK":                {Web: 20},
+		"OSDOff":            {Cmd1: "k", Cmd2: "l", Data: "00"},
+		"OSDOn":             {Cmd1: "k", Cmd2: "l", Data: "01"},
+		"Pause":             {Web: 34},
+		"PIP_CH_Down":       {Web: 415},
+		"PIP_CH_Up":         {Web: 414},
+		"PIP_Switch":        {Web: 416},
+		"PIP":               {Web: 48},
+		"Play":              {Web: 33},
+		"PowerOff":          {Cmd1: "k", Cmd2: "a", Data: "00", Web: 0},
+		"PowerOn":           {Cmd1: "k", Cmd2: "a", Data: "01", Web: 1},
+		"PowerStatus":       {Cmd1: "k", Cmd2: "a", Data: "FF"},
+		"Prev_Ch":           {Web: 403},
+		"Prog_List":         {Web: 50},
+		"Quick_Menu":        {Web: 405},
+		"REC_List":          {Web: 41},
+		"REC":               {Web: 40},
+		"Red":               {Web: 31},
+		"RemoteDisable":     {Cmd1: "k", Cmd2: "m", Data: "00"},
+		"RemoteEnable":      {Cmd1: "k", Cmd2: "m", Data: "01"},
+		"Repeat":            {Web: 42},
+		"Reserve":           {Web: 413},
+		"REW":               {Web: 37},
+		"Right":             {Web: 15},
+		"ScreenOff":         {Cmd1: "k", Cmd2: "d", Data: "00"},
+		"ScreenOn":          {Cmd1: "k", Cmd2: "d", Data: "01"},
+		"SharpnessLevel":    {Cmd1: "k", Cmd2: "k", Data: "FF"},
+		"SharpnessSet":      {Cmd1: "k", Cmd2: "k", Max: 64},
+		"SimpLink":          {Web: 411},
+		"Skip_FF":           {Web: 38},
+		"Skip_REW":          {Web: 39},
+		"Stop":              {Web: 35},
+		"Subtitle":          {Web: 49},
+		"Text_Opt":          {Web: 406},
+		"Text":              {Web: 51},
+		"Tile1x2":           {Cmd1: "d", Cmd2: "d", Data: "12", Note: "(column x row)"},
+		"Tile1x3":           {Cmd1: "d", Cmd2: "d", Data: "13", Note: "(column x row)"},
+		"Tile1x4":           {Cmd1: "d", Cmd2: "d", Data: "14", Note: "(column x row)"},
+		"Tile2x2":           {Cmd1: "d", Cmd2: "d", Data: "22", Note: "(column x row)"},
+		"Tile2x3":           {Cmd1: "d", Cmd2: "d", Data: "23", Note: "(column x row)"},
+		"Tile2x4":           {Cmd1: "d", Cmd2: "d", Data: "24", Note: "(column x row)"},
+		"Tile3x2":           {Cmd1: "d", Cmd2: "d", Data: "32", Note: "(column x row)"},
+		"Tile3x3":           {Cmd1: "d", Cmd2: "d", Data: "33", Note: "(column x row)"},
+		"Tile3x4":           {Cmd1: "d", Cmd2: "d", Data: "34", Note: "(column x row)"},
+		"Tile4x2":           {Cmd1: "d", Cmd2: "d", Data: "42", Note: "(column x row)"},
+		"Tile4x3":           {Cmd1: "d", Cmd2: "d", Data: "43", Note: "(column x row)"},
+		"Tile4x4":           {Cmd1: "d", Cmd2: "d", Data: "44", Note: "(column x row)"},
+		"TileID":            {Cmd1: "d", Cmd2: "i", Max: 10},
+		"TileOff":           {Cmd1: "d", Cmd2: "d", Data: "00"},
+		"TileSizeH":         {Cmd1: "d", Cmd2: "g", Max: 64},
+		"TileSizeV":         {Cmd1: "d", Cmd2: "h", Max: 64},
+		"TimeElapsed":       {Cmd1: "d", Cmd2: "l", Data: "FF", Note: "The data means used hours. (Hexadecimal code)"},
+		"TintLevel":         {Cmd1: "k", Cmd2: "j", Data: "FF"},
+		"TintSet":           {Cmd1: "k", Cmd2: "j", Max: 64},
+		"Up":                {Web: 12},
+		"VolumeDn":          {Web: 25},
+		"VolumeLevel":       {Cmd1: "k", Cmd2: "f", Data: "FF"},
+		"VolumeSet":         {Cmd1: "k", Cmd2: "f", Max: 64},
+		"VolumeUp":          {Web: 24},
+		"Yellow":            {Web: 32},
 	}
 
 	conn     *net.UDPConn // UDP Connection
@@ -131,6 +222,66 @@ var (
 
 	sock = false
 )
+
+// RespMap is a a map of response keys mapped to LG TV functions.
+type RespMap map[int]map[string]string
+
+func (r RespMap) respMapIDs() {
+	for i := 0; i < 100; i++ {
+		r[i] = make(map[string]string)
+	}
+}
+
+// GetRespMap creates a map of response keys mapped to LG TV functions.
+func (tv TVCmds) GetRespMap() RespMap {
+	r := make(RespMap)
+	r.respMapIDs()
+	for id := range r {
+		idStr := strconv.Itoa(id)
+		if id < 10 {
+			idStr = "0" + strconv.Itoa(id)
+		}
+		for tvKey := range tv {
+			v := tv[tvKey]
+			if v.Data != "" && v.Data != "FF" {
+				for _, code := range []string{"NG", "OK"} {
+					switch v.Max {
+					case 0:
+						r[id][fmt.Sprintf("%s %s %s %s x", v.Cmd2, code, idStr, v.Data)] = tvKey
+					default:
+						for i := 0; i <= v.Max; i++ {
+							data := strconv.Itoa(i)
+							if i < 10 {
+								data = "0" + data
+							}
+							r[id][fmt.Sprintf("%s %s %s %s x", v.Cmd2, code, idStr, data)] = tvKey
+						}
+					}
+				}
+			}
+		}
+	}
+	return r
+}
+
+// func NewCmdMap(tv TVCmds) IDCmdMap {
+// 	idMap := make(IDCmdMap)
+// 	respMap := make(map[string]string)
+//
+// 	for i := 0; i < 100; i++ {
+// 		for k := range tv {
+// 			resp := tv[k]
+// 			if resp.Ack != "" && resp.Max == "" {
+// 				for _, code := range []string{"NG", "OK"} {
+// 					b := fmt.Sprintf(tv[k].Ack, i, code)
+// 					respMap[b]
+// 				}
+// 			}
+//
+// 		}
+// 		idMap[i]
+// 	}
+// }
 
 // Send sends an http request to the LG smart tv specified by *TV
 func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
@@ -343,38 +494,38 @@ func (a *API) pairingRequest() error {
 	return nil
 }
 
-// Pair holds key/value pairs
-type Pair struct {
-	Key   string
-	Value int
-}
+func (r RespMap) String() string {
+	var (
+		fMap = make(map[string]string)
+		keys sort.StringSlice
+		s    string
+	)
 
-// PairList is a slice of pairs that implements sort.Interface to sort by values
-type PairList []Pair
-
-func (p PairList) Len() int           { return len(p) }
-func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
-
-func (tv TVCmds) String() (s string) {
-	maxLen := func(keys PairList) int {
-		smallest := len(keys[0].Key)
-		largest := len(keys[0].Key)
+	maxLen := func(keys sort.StringSlice) int {
+		smallest := len(keys[0])
+		largest := smallest
 		for i := range keys {
-			if len(keys[i].Key) > largest {
-				largest = len(keys[i].Key)
-			} else if len(keys[i].Key) < smallest {
-				smallest = len(keys[i].Key)
+			if len(keys[i]) > largest {
+				largest = len(keys[i])
+			} else if len(keys[i]) < smallest {
+				smallest = len(keys[i])
 			}
 		}
 		return largest
 	}
 
-	i := 0
-	keys := make(PairList, len(tv))
-	for k, v := range tv {
-		keys[i] = Pair{k, v}
-		i++
+	for k := range r {
+		for sk, v := range r[k] {
+			id := strconv.Itoa(k)
+			if k < 10 {
+				id = "0" + strconv.Itoa(k)
+			}
+			fMap[v+" (ID: "+id+")"] = sk
+		}
+	}
+
+	for k := range fMap {
+		keys = append(keys, k)
 	}
 
 	pad := func(s string) string {
@@ -383,8 +534,13 @@ func (tv TVCmds) String() (s string) {
 
 	sort.Sort(keys)
 	for _, k := range keys {
-		s += fmt.Sprintf("\t%q%v%v %d\n", k.Key, pad(k.Key), "=>", k.Value)
+		s += fmt.Sprintf("\t%v%v%v %q\n", k, pad(k), "=>", fMap[k])
 	}
 
 	return s
+}
+
+func (tv TVCmds) String() string {
+	b, _ := json.MarshalIndent(tv, "", "\t")
+	return string(b)
 }
