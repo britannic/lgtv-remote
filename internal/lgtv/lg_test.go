@@ -15,35 +15,27 @@ import (
 func TestRespMapIDs(t *testing.T) {
 	Convey("Testing respMapIDs()", t, func() {
 		tests := []struct {
-			l    int
-			name string
-			r    RespMap
+			rLen  int
+			rkLen int
+			name  string
+			r     RespMap
+			rTV   TVCmds
 		}{
-			{l: 100, name: "Vanilla", r: Cmd.GetRespMap()},
+			{rLen: 100, rkLen: 2, name: "Single Record", rTV: TVCmds{"Single-Step": {Cmd1: "k", Cmd2: "z"}}},
+			{rLen: 100, rkLen: 130, name: "Step Generator", rTV: TVCmds{"Multi-Step": {Cmd1: "k", Cmd2: "q", Max: 64}}},
+			{rLen: 100, rkLen: 0, name: "WebOS Only", rTV: TVCmds{"WebOs": {}}},
 		}
+
 		for _, tt := range tests {
-			tt.r.respMapIDs()
-			So(len(tt.r), ShouldEqual, tt.l)
+			tt.r = tt.rTV.GetRespMap()
+			Convey("running test: "+tt.name, func() {
+				So(len(tt.r), ShouldEqual, tt.rLen)
+				for k := range tt.r {
+					So(len(tt.r[k]), ShouldEqual, tt.rkLen)
+				}
+			})
 		}
 	})
-}
-
-func TestTVCmdsGetRespMap(t *testing.T) {
-	tests := []struct {
-		// Test description.
-		name string
-		// Receiver.
-		tv TVCmds
-		// Expected results.
-		want RespMap
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		if got := tt.tv.GetRespMap(); !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("%q. TVCmds.GetRespMap() = %v, want %v", tt.name, got, tt.want)
-		}
-	}
 }
 
 func TestAPISend(t *testing.T) {

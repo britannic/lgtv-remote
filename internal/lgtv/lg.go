@@ -55,11 +55,14 @@ type LGCmd struct {
 	Web  int    `json:"WebOS,omitempty"`
 }
 
-// TVCmds is a map[string]struct{} map of commands
-type TVCmds map[string]LGCmd
-
 // IDCmdMap is a map TVCmds keyed to IDs
 type IDCmdMap map[int]TVCmds
+
+// RespMap is a a map of response keys mapped to LG TV functions.
+type RespMap map[int]map[string]string
+
+// TVCmds is a map[string]struct{} map of commands
+type TVCmds map[string]LGCmd
 
 var (
 	// Cmd maps LG TV int commands to meaningful names
@@ -68,14 +71,14 @@ var (
 		"3D_LR":             {Web: 401},
 		"3D":                {Web: 400},
 		"AbnormalRead":      {Cmd1: "k", Cmd2: "z", Data: "FF"},
-		"AbnormalState0":    {Data: "0", Note: "Normal (Power on and signal exist)"},
-		"AbnormalState1":    {Data: "1", Note: "No signal (Power on)"},
-		"AbnormalState2":    {Data: "2", Note: "Turn the monitor off by remote control"},
-		"AbnormalState3":    {Data: "3", Note: "Turn the monitor off by sleep time function"},
-		"AbnormalState4":    {Data: "4", Note: "Turn the monitor off by RS-232C function"},
-		"AbnormalState6":    {Data: "6", Note: "AC down"},
-		"AbnormalState8":    {Data: "8", Note: "Turn the monitor off by off time function"},
-		"AbnormalState9":    {Data: "9", Note: "Turn the monitor off by auto off function"},
+		"AbnormalState0":    {Cmd2: "z", Data: "0", Note: "Normal (Power on and signal exist)"},
+		"AbnormalState1":    {Cmd2: "z", Data: "1", Note: "No signal (Power on)"},
+		"AbnormalState2":    {Cmd2: "z", Data: "2", Note: "Turn the monitor off by remote control"},
+		"AbnormalState3":    {Cmd2: "z", Data: "3", Note: "Turn the monitor off by sleep time function"},
+		"AbnormalState4":    {Cmd2: "z", Data: "4", Note: "Turn the monitor off by RS-232C function"},
+		"AbnormalState6":    {Cmd2: "z", Data: "6", Note: "AC down"},
+		"AbnormalState8":    {Cmd2: "z", Data: "8", Note: "Turn the monitor off by off time function"},
+		"AbnormalState9":    {Cmd2: "z", Data: "9", Note: "Turn the monitor off by auto off function"},
 		"AfterImageInvert":  {Cmd1: "j", Cmd2: "p", Data: "01"},
 		"AfterImageNormal":  {Cmd1: "j", Cmd2: "p", Data: "08"},
 		"AfterImageOrbiter": {Cmd1: "j", Cmd2: "p", Data: "02"},
@@ -223,9 +226,6 @@ var (
 	sock = false
 )
 
-// RespMap is a a map of response keys mapped to LG TV functions.
-type RespMap map[int]map[string]string
-
 func (r RespMap) respMapIDs() {
 	for i := 0; i < 100; i++ {
 		r[i] = make(map[string]string)
@@ -234,6 +234,13 @@ func (r RespMap) respMapIDs() {
 
 // GetRespMap creates a map of response keys mapped to LG TV functions.
 func (tv TVCmds) GetRespMap() RespMap {
+	ok := func(v LGCmd) bool {
+		if v.Data == "FF" || (v.Cmd1 == "" && v.Cmd2 == "") {
+			return false
+		}
+		return true
+	}
+
 	r := make(RespMap)
 	r.respMapIDs()
 	for id := range r {
@@ -243,7 +250,7 @@ func (tv TVCmds) GetRespMap() RespMap {
 		}
 		for tvKey := range tv {
 			v := tv[tvKey]
-			if v.Data != "" && v.Data != "FF" {
+			if ok(v) {
 				for _, code := range []string{"NG", "OK"} {
 					switch v.Max {
 					case 0:
@@ -263,25 +270,6 @@ func (tv TVCmds) GetRespMap() RespMap {
 	}
 	return r
 }
-
-// func NewCmdMap(tv TVCmds) IDCmdMap {
-// 	idMap := make(IDCmdMap)
-// 	respMap := make(map[string]string)
-//
-// 	for i := 0; i < 100; i++ {
-// 		for k := range tv {
-// 			resp := tv[k]
-// 			if resp.Ack != "" && resp.Max == "" {
-// 				for _, code := range []string{"NG", "OK"} {
-// 					b := fmt.Sprintf(tv[k].Ack, i, code)
-// 					respMap[b]
-// 				}
-// 			}
-//
-// 		}
-// 		idMap[i]
-// 	}
-// }
 
 // Send sends an http request to the LG smart tv specified by *TV
 func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
