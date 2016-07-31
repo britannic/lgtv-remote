@@ -58,16 +58,15 @@ type LGCmd struct {
 // IDCmdMap is a map TVCmds keyed to IDs
 type IDCmdMap map[int]TVCmds
 
-// RespMap is a a map of response keys mapped to LG TV functions.
+// RespMap is a map of response keys mapped to LG TV functions.
 type RespMap map[int]map[string]string
 
-// TVCmds is a map[string]struct{} map of commands
+// TVCmds is a map[string]LGCmd map of RS-232C serial and WebOS commands.
 type TVCmds map[string]LGCmd
 
 var (
-	// Cmd maps LG TV int commands to meaningful names
+	// Cmd maps LG TV int commands to meaningful names.
 	Cmd = TVCmds{
-		// %v is a placeholder for ID (if multi 2nd %v setting), 00 = units
 		"3D_LR":           {Web: 401},
 		"3D":              {Web: 400},
 		"AbnormalRead":    {Cmd1: "k", Cmd2: "z", Data: "FF"},
@@ -215,7 +214,7 @@ var (
 		"Yellow":          {Web: 32},
 	}
 
-	conn     *net.UDPConn // UDP Connection
+	conn     *net.UDPConn
 	maxTries = 10
 
 	mode = CmdMode{
@@ -271,7 +270,7 @@ func (tv TVCmds) GetRespMap() RespMap {
 	return r
 }
 
-// Send sends an http request to the LG smart tv specified by *TV
+// Send xmits a WebOS request to the LG TV.
 func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 	var (
 		body    []byte
@@ -281,7 +280,7 @@ func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 		req     *http.Request
 	)
 
-	a.Info("About to contact LG TV on address: ", lgtvCMD, " with command: ", string(msg))
+	a.Infof("About to contact LG TV on address: %s with command: %s", lgtvCMD, string(msg))
 
 	if req, err = http.NewRequest("POST", lgtvCMD, nil); err != nil {
 		return http.StatusNotAcceptable, strings.NewReader(fmt.Sprintf("Unable to form HTTP request %v", lgtvCMD)), err
@@ -307,7 +306,7 @@ func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error) {
 	return resp.StatusCode, bytes.NewBuffer(body), err
 }
 
-// ShowPIN displays PIN on screen for pairing
+// ShowPIN displays the LG TV's PIN (Pairing ID Number) on its screen.
 func (a *API) ShowPIN() {
 	if !sock {
 		a.setUpSox()
@@ -343,7 +342,7 @@ func (a *API) ShowPIN() {
 	}
 }
 
-// Pair using a specified pin
+// Pair using the LG TV's PIN
 func (a *API) Pair() {
 	msg := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="pairing"><name>hello</name><value>%v</value><port>8080</port></api></envelope>`, a.Pin))
 
@@ -352,7 +351,7 @@ func (a *API) Pair() {
 	a.Send(mode.Pair, msg)
 }
 
-// Zap sends a command to the tv
+// Zap xmits a WebOS command.
 func (a *API) Zap(cmd int) bool {
 	i := strconv.Itoa(cmd)
 	xmitStr := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><envelope><api type="command"><name>HandleKeyInput</name><value>%v</value></api></envelope>`, i))
@@ -362,7 +361,7 @@ func (a *API) Zap(cmd int) bool {
 
 	resp, _, _ := a.Send(mode.Send, zap)
 
-	// Pairing required whenever the LG has been turned off and then on
+	// Pairing required after the LG TV has been turned off
 	if resp != 200 {
 		a.Pair()
 		resp, _, _ = a.Send(mode.Send, xmitStr)
@@ -447,15 +446,13 @@ func (a *API) chkMsgs() (bool, error) {
 	return ok, err
 }
 
-// parseMsg parses a message found by CheckForMessages
 func (a *API) parseMsg(msg string, addr *net.UDPAddr) (bool, error) {
 	if msg == "" {
-		panic("empty message")
+		return false, fmt.Errorf("message cannot be empty")
 	}
 
 	if addr.Port == 1990 {
 		rx := regexp.MustCompile(`SERVER: [\w//.]* [\w//.]* ([\w-]*)`)
-
 		a.Found = true
 		a.IP = addr.IP
 		a.Name = rx.FindStringSubmatch(msg)[1]
