@@ -19,6 +19,10 @@ var (
 )
 
 func main() {
+	fmt.Println(lgtv.Cmd.GetRespMap())
+
+	os.Exit(0)
+
 	err := newLog()
 	if err != nil {
 		log.Errorf("Unable to open log file: %v, error: %v\n", logFile, err)
@@ -109,8 +113,7 @@ func main() {
 	// 	log.Error("Unable to contact TV...")
 	// }
 
-	fmt.Println(lgtv.Cmd)
-	fmt.Println(lgtv.Cmd.GetRespMap())
+	// fmt.Println(lgtv.Cmd)
 
 }
 
