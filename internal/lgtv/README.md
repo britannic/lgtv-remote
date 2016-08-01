@@ -9,7 +9,7 @@
 ## Variables
 ``` go
 var (
-    // Cmd maps LG TV int commands to meaningful names.
+    // Cmd maps LG TV commands to meaningful names.
     Cmd = TVCmds{
         "3D_LR":           {Web: 401},
         "3D":              {Web: 400},
@@ -161,64 +161,6 @@ var (
 ```
 
 
-## type API
-``` go
-type API struct {
-    *logging.Logger
-    AppID   string
-    AppName string
-    Found   bool
-    ID      string
-    IP      net.IP
-    Name    string
-    Pin     string
-    Timeout time.Duration
-}
-```
-API struct for the LG TV API interface
-
-
-
-
-
-
-
-
-
-
-
-### func (\*API) Pair
-``` go
-func (a *API) Pair()
-```
-Pair using the LG TV's PIN
-
-
-
-### func (\*API) Send
-``` go
-func (a *API) Send(cmd string, msg []byte) (int, io.Reader, error)
-```
-Send xmits a WebOS request to the LG TV.
-
-
-
-### func (\*API) ShowPIN
-``` go
-func (a *API) ShowPIN()
-```
-ShowPIN displays the LG TV's PIN (Pairing ID Number) on its screen.
-
-
-
-### func (\*API) Zap
-``` go
-func (a *API) Zap(cmd int) bool
-```
-Zap xmits a WebOS command.
-
-
-
 ## type CmdMode
 ``` go
 type CmdMode struct {
@@ -242,7 +184,7 @@ CmdMode sets which API command is used
 ``` go
 type IDCmdMap map[int]TVCmds
 ```
-IDCmdMap is a map TVCmds keyed to IDs
+IDCmdMap is a map of TVCmds keyed to IDs
 
 
 
@@ -297,6 +239,14 @@ RespMap is a map of response keys mapped to LG TV functions.
 ``` go
 func (r RespMap) String() string
 ```
+
+
+### func (RespMap) Xmit
+``` go
+func (r RespMap) Xmit(ctx context.Context, tv TVCmds) (bool, error)
+```
+Xmit sends a request using the a selected serial driver
+
 
 
 ## type TVCmds
