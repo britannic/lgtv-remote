@@ -37,6 +37,13 @@ type WebOS struct {
 	Timeout time.Duration
 }
 
+var (
+	conn     *net.UDPConn
+	maxTries = 10
+	mode     = CmdMode{Pair: "/udap/api/pairing", Send: "/udap/api/command"}
+	sock     = false
+)
+
 func (w *WebOS) chkMsgs() (bool, error) {
 	var (
 		buf [1024]byte
